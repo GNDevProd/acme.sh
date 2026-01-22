@@ -8,16 +8,12 @@ Options:
  OPUSDNS_API_Key API Key. Can be created at https://dashboard.opusdns.com/settings/api-keys
  OPUSDNS_API_Endpoint API Endpoint URL. Default "https://api.opusdns.com". Optional.
  OPUSDNS_TTL TTL for DNS challenge records in seconds. Default "60". Optional.
- OPUSDNS_Polling_Interval DNS propagation check interval in seconds. Default "6". Optional.
- OPUSDNS_Propagation_Timeout Maximum time to wait for DNS propagation in seconds. Default "120". Optional.
 Issues: github.com/acmesh-official/acme.sh/issues/XXXX
 Author: OpusDNS Team <https://github.com/opusdns>
 '
 
 OPUSDNS_API_Endpoint_Default="https://api.opusdns.com"
 OPUSDNS_TTL_Default=60
-OPUSDNS_Polling_Interval_Default=6
-OPUSDNS_Propagation_Timeout_Default=120
 
 ######## Public functions ###########
 
@@ -55,9 +51,6 @@ dns_opusdns_add() {
   fi
   _saveaccountconf_mutable OPUSDNS_TTL "$OPUSDNS_TTL"
 
-  OPUSDNS_Polling_Interval="${OPUSDNS_Polling_Interval:-$OPUSDNS_Polling_Interval_Default}"
-  OPUSDNS_Propagation_Timeout="${OPUSDNS_Propagation_Timeout:-$OPUSDNS_Propagation_Timeout_Default}"
-
   _debug "API Endpoint: $OPUSDNS_API_Endpoint"
   _debug "TTL: $OPUSDNS_TTL"
 
@@ -77,14 +70,6 @@ dns_opusdns_add() {
   fi
 
   _info "TXT record added successfully"
-
-  # Wait for DNS propagation
-  if ! _opusdns_wait_for_propagation "$fulldomain" "$txtvalue"; then
-    _err "Warning: DNS record may not have propagated yet"
-    _err "Certificate issuance may fail. Please check your DNS configuration."
-    # Don't fail here - let ACME client decide
-  fi
-
   return 0
 }
 
@@ -316,64 +301,4 @@ _opusdns_remove_record() {
   fi
 
   return 0
-}
-
-# Wait for DNS propagation by checking OpusDNS authoritative nameservers
-_opusdns_wait_for_propagation() {
-  fulldomain=$1
-  txtvalue=$2
-
-  _info "Waiting for DNS propagation to authoritative nameservers (max ${OPUSDNS_Propagation_Timeout}s)..."
-
-  max_attempts=$((OPUSDNS_Propagation_Timeout / OPUSDNS_Polling_Interval))
-  # Ensure at least one attempt even if interval > timeout
-  if [ "$max_attempts" -lt 1 ]; then
-    max_attempts=1
-  fi
-  attempt=1
-
-  # OpusDNS authoritative nameservers
-  nameservers="ns1.opusdns.com ns2.opusdns.net"
-
-  while [ $attempt -le $max_attempts ]; do
-    _debug "Propagation check attempt $attempt/$max_attempts"
-
-    all_propagated=1
-
-    # Check all OpusDNS authoritative nameservers
-    for ns in $nameservers; do
-      if _exists dig; then
-        result=$(dig @"$ns" +short "$fulldomain" TXT 2>/dev/null | tr -d '"')
-      elif _exists nslookup; then
-        result=$(nslookup -type=TXT "$fulldomain" "$ns" 2>/dev/null | grep -A1 "text =" | tail -n1 | tr -d '"' | sed 's/^[[:space:]]*//')
-      else
-        _err "Neither dig nor nslookup found. Cannot verify DNS propagation."
-        return 1
-      fi
-
-      _debug2 "DNS query result from $ns: $result"
-
-      if ! echo "$result" | grep -qF "$txtvalue"; then
-        _debug "Record not yet on $ns"
-        all_propagated=0
-      else
-        _debug "Record found on $ns ✓"
-      fi
-    done
-
-    if [ $all_propagated -eq 1 ]; then
-      _info "DNS record propagated to all OpusDNS nameservers!"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_attempts ]; then
-      _debug "Record not propagated to all nameservers yet, waiting ${OPUSDNS_Polling_Interval}s..."
-      sleep "$OPUSDNS_Polling_Interval"
-    fi
-
-    attempt=$((attempt + 1))
-  done
-
-  _err "DNS record did not propagate to all nameservers within ${OPUSDNS_Propagation_Timeout} seconds"
-  return 1
 }
