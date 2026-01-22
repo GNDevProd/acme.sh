@@ -124,7 +124,8 @@ dns_opusdns_rm() {
 
 ######## Private functions ###########
 
-# Detect zone from FQDN by querying OpusDNS API
+# Detect zone from FQDN by checking against OpusDNS API
+# Iterates through domain parts until a valid zone is found
 # Sets global variables: _zone, _record_name
 _get_zone() {
   domain=$1
@@ -133,100 +134,41 @@ _get_zone() {
   # Remove trailing dot if present
   domain=$(echo "$domain" | sed 's/\.$//')
 
-  # Get all zones from OpusDNS with pagination support
   export _H1="X-Api-Key: $OPUSDNS_API_Key"
 
-  zones=""
-  page=1
-  has_more=1
+  # Start from position 2 (skip first part like _acme-challenge)
+  i=2
+  p=1
+  while true; do
+    # Extract potential zone (domain parts from position i onwards)
+    h=$(printf "%s" "$domain" | cut -d . -f "$i"-100)
+    _debug "Trying zone: $h"
 
-  while [ $has_more -eq 1 ]; do
-    _debug2 "Fetching zones page $page"
-    response=$(_get "$OPUSDNS_API_Endpoint/v1/dns?page=$page&page_size=100")
-    if [ $? -ne 0 ]; then
-      _err "Failed to query zones from OpusDNS API (page $page)"
-      _debug "Response: $response"
+    if [ -z "$h" ]; then
+      # No more parts to try
+      _err "Could not find a valid zone for: $domain"
       return 1
     fi
 
-    _debug2 "Zones response (page $page): $response"
+    # Check if this zone exists in OpusDNS
+    response=$(_get "$OPUSDNS_API_Endpoint/v1/dns/$h")
 
-    # Extract zone names from this page
-    # The API returns: {"results":[{"name":"zone.com.",...},...],"pagination":{"has_next_page":true,...}}
-    if _exists jq; then
-      page_zones=$(echo "$response" | jq -r '.results[].name' 2>/dev/null | sed 's/\.$//')
-      has_next=$(echo "$response" | jq -r '.pagination.has_next_page // false' 2>/dev/null)
-    else
-      # Fallback: extract zone names using grep/sed
-      # Extract only top-level zone names from results array (before rrsets)
-      # Pattern: "results":[{"...","name":"zonename.com.","domain_parts":
-      page_zones=$(echo "$response" | sed 's/,"rrsets":\[[^]]*\]//g' | grep -o '"results":\[.*\]' | grep -o '"name":"[^"]*"' | sed 's/"name":"//g;s/"//g;s/\.$//')
-      # Extract has_next_page from pagination object
-      if echo "$response" | grep -q '"has_next_page":true'; then
-        has_next="true"
-      else
-        has_next="false"
-      fi
+    if _contains "$response" '"name"'; then
+      # Zone found
+      _record_name=$(printf "%s" "$domain" | cut -d . -f 1-"$p")
+      _zone="$h"
+      _debug "Found zone: $_zone"
+      _debug "Record name: $_record_name"
+      return 0
     fi
 
-    _debug2 "Page $page zones: $page_zones"
-    _debug2 "Has next page: $has_next"
-
-    # Append zones from this page
-    if [ -n "$page_zones" ]; then
-      if [ -z "$zones" ]; then
-        zones="$page_zones"
-      else
-        zones="$zones
-$page_zones"
-      fi
-    fi
-
-    # Check if there are more pages
-    if [ "$has_next" = "true" ]; then
-      page=$((page + 1))
-    else
-      has_more=0
-    fi
+    _debug "$h not found, trying next"
+    p="$i"
+    i=$(_math "$i" + 1)
   done
 
-  if [ -z "$zones" ]; then
-    _err "No zones found in OpusDNS account"
-    _debug "API Response: $response"
-    return 1
-  fi
-
-  _debug2 "Available zones (all pages): $zones"
-
-  # Find longest matching zone
-  _zone=""
-  _zone_length=0
-
-  for zone in $zones; do
-    zone_with_dot="${zone}."
-    if _endswith "$domain." "$zone_with_dot"; then
-      zone_length=${#zone}
-      if [ "$zone_length" -gt "$_zone_length" ]; then
-        _zone="$zone"
-        _zone_length=$zone_length
-      fi
-    fi
-  done
-
-  if [ -z "$_zone" ]; then
-    _err "No matching zone found for domain: $domain"
-    _err "Available zones: $zones"
-    return 1
-  fi
-
-  # Calculate record name (subdomain part)
-  # Use parameter expansion instead of sed to avoid regex metacharacter issues
-  _record_name="${domain%."${_zone}"}"
-  # Handle case where domain equals zone (remove trailing dot if present)
-  if [ "$_record_name" = "$domain" ]; then
-    _record_name="${domain%"${_zone}"}"
-    _record_name="${_record_name%.}"
-  fi
+  return 1
+}
 
   if [ -z "$_record_name" ]; then
     _record_name="@"
