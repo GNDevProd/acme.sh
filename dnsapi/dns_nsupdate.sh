@@ -6,7 +6,7 @@ Docs: github.com/acmesh-official/acme.sh/wiki/dnsapi#dns_nsupdate
 Options:
  NSUPDATE_SERVER Server hostname. Default: "localhost".
  NSUPDATE_SERVER_PORT Server port. Default: "53".
- NSUPDATE_KEY File path to TSIG key. Default: ""
+ NSUPDATE_KEY File path to TSIG key. Default: "". Optional.
  NSUPDATE_ZONE Domain zone to update. Optional.
 '
 
