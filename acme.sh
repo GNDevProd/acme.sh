@@ -5181,7 +5181,12 @@ $_authorizations_map"
         if [ "$DEBUG" ]; then
           if [ "$vtype" = "$VTYPE_HTTP" ]; then
             _debug "Debug: GET token URL."
-            _get "http://$d/.well-known/acme-challenge/$token" "" 1
+            if _isIPv6 "$d"; then
+              host="[$d]"
+            else
+              host="$d"
+            fi
+            _get "http://$host/.well-known/acme-challenge/$token" "" 1
           fi
         fi
         _clearupwebbroot "$_currentRoot" "$removelevel" "$token"
