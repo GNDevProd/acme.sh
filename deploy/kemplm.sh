@@ -86,6 +86,7 @@ kemplm_deploy() {
       _info "Upload successful"
     else
       _err "Upload failed: ${_kemp_post_message}"
+      _retval=1
     fi
   else
     _err "Upload failed"
